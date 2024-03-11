@@ -1,6 +1,6 @@
 from skimage.io import imread, imsave
 from skimage import io
-from skimage.color import rgb2hsv, lab2rgb, rgb2lab, deltaE_ciede94
+from skimage.color import rgb2hsv, lab2rgb, rgb2lab, deltaE_ciede94, hsv2rgb
 from sklearn.mixture import GaussianMixture
 from numpy import quantile
 import numpy as np
@@ -23,6 +23,25 @@ class MainClass:
         self.n_quantiles = n_quantiles
         self.make_value_maps(n_quantiles=n_quantiles)
         self.background_rgb = None
+
+    def modify_hsv_from_rgb(self, image_rgb: np.ndarray, s_aug: float = 1.0, v_aug: float = 1.0) -> np.ndarray:
+        image_hsv = rgb2hsv(image_rgb)
+        image_hsv[:, :, 1] *= s_aug
+        image_hsv[:, :, 2] *= v_aug
+
+        return hsv2rgb(image_hsv)
+
+    def show_progress(self, live_image_rgb: np.ndarray, curr_layer_idx: int = 0, s_aug: float = 0.75, v_aug: float = 0.5) -> np.ndarray:
+        """
+        Shows where the current live image matches the current layer.
+        """
+        background_mask = self.background_mask(live_image_rgb)
+        valuemap_minus_painted_mask = self.value_map_masks[curr_layer_idx] * background_mask[:, :, 0]
+        valuemap_minus_painted_mask_3d = np.repeat(np.expand_dims(valuemap_minus_painted_mask, 2), 3, 2)
+        output_image_rgb = np.where(valuemap_minus_painted_mask_3d,
+                                    live_image_rgb[:, :, :3],
+                                    self.value_maps[curr_layer_idx])
+        return output_image_rgb
 
     def set_background_rgb(self, image: np.ndarray):
         """
@@ -75,8 +94,6 @@ class MainClass:
         """
         Compares two images, returns an image showing where they don't match
         """
-        live_image_mask = live_image_rgb[:, :, :3]
-
         live_image_lab = rgb2lab(live_image_rgb[:, :, :3])
         base_image_lab = rgb2lab(base_image_rgb[:, :, :3])
 
@@ -103,5 +120,9 @@ test_image_lab_2 = test_image_lab[:, :, 2]
 
 background_mask = main_class.background_mask(live_image_rgb)
 
-io.imshow(test_image_lab_2)
+valuemap_painted_match = main_class.value_map_masks[0] * ~background_mask[:, :, 0]
+valuemap_minus_painted = main_class.value_map_masks[0] * background_mask[:, :, 0]
+
+
+io.imshow(main_class.show_progress(live_image_rgb, curr_layer_idx=0))
 io.show()
