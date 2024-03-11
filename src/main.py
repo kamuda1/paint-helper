@@ -1,6 +1,7 @@
 from skimage.io import imread, imsave
 from skimage import io
 from skimage.color import rgb2hsv, lab2rgb, rgb2lab, deltaE_ciede94
+from sklearn.mixture import GaussianMixture
 from numpy import quantile
 import numpy as np
 import os
@@ -23,13 +24,28 @@ class MainClass:
         self.make_value_maps(n_quantiles=n_quantiles)
         self.background_rgb = None
 
-    def set_background_rgb(self, value: np.ndarray):
-        self.background_rgb = value
+    def set_background_rgb(self, image: np.ndarray):
+        """
+        Sets initial painting background and trains a gaussian mixture model to identify background in future images.
+        Also defines a minimum log likelihood for background, anything that scores less than that is likely not
+        background.
+        """
+        self.background_rgb = image
+        background_pixel_rgb = image.reshape([image.shape[0] * image.shape[1], 4])[:, :3]
+        self.background_gm_trained = GaussianMixture().fit(background_pixel_rgb)
+        self.min_loglikelihood_background = min(self.background_gm_trained.score_samples(background_pixel_rgb))
 
     def get_background_rgb(self):
         if self.background_rgb is None:
             raise TypeError("Background Not Initialized")
         return self.background_rgb
+
+    def background_mask(self, image: np.ndarray, likeihood_factor: float = 0.1):
+        live_pixel_rgb = image.reshape([image.shape[0] * image.shape[1], 4])[:, :3]
+        loglikelihood_pixels = self.background_gm_trained.score_samples(live_pixel_rgb)
+        background_mask = loglikelihood_pixels.reshape(
+            image.shape[0], image.shape[1], 1) > likeihood_factor * self.min_loglikelihood_background
+        return background_mask
 
     def show_base_image(self):
         io.imshow(self.base_image_rgb)
@@ -83,6 +99,9 @@ test_image_lab = main_class.compare_images(live_image_rgb=live_image_rgb, base_i
 test_image_lab_0 = test_image_lab[:, :, 0]
 test_image_lab_1 = test_image_lab[:, :, 1]
 test_image_lab_2 = test_image_lab[:, :, 2]
+
+
+background_mask = main_class.background_mask(live_image_rgb)
 
 io.imshow(test_image_lab_2)
 io.show()
