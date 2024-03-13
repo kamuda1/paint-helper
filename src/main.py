@@ -5,6 +5,7 @@ from skimage import io
 from skimage.transform import resize
 from skimage.color import rgb2hsv, lab2rgb, rgb2lab, deltaE_ciede94, hsv2rgb
 from sklearn.mixture import GaussianMixture
+from sklearn.neighbors import NearestCentroid
 from numpy import quantile
 import numpy as np
 import os
@@ -36,13 +37,11 @@ class MainClass:
 
     def show_progress(self, live_image_rgb: np.ndarray, curr_layer_idx: int = 0, s_aug: float = 0.75, v_aug: float = 0.5) -> np.ndarray:
         """
-        Shows where the current live image matches the current layer.
+        Shows where the current live image matches the current layer. Match is checked both spatially, does the pixel
+        fall on the layer's mask, and if the color matches the layer.
         """
         if self.get_background_rgb() is None:
             return None
-
-        # if type(live_image_rgb) == gradio.components.image.Image:
-        #     live_image_rgb = imread(str(live_image_rgb.temp_files)[2:-2])
 
         live_image_rgb = resize(live_image_rgb, self.base_image_rgb.shape)
         live_image_rgb = (live_image_rgb*255).astype(np.uint8)
@@ -50,6 +49,29 @@ class MainClass:
         background_mask = self.background_mask(live_image_rgb)
         valuemap_minus_painted_mask = self.value_map_masks[curr_layer_idx] * background_mask[:, :, 0]
         valuemap_minus_painted_mask_3d = np.repeat(np.expand_dims(valuemap_minus_painted_mask, 2), 3, 2)
+
+        # ================
+        live_image_rgb_flat = live_image_rgb.reshape(
+            [live_image_rgb.shape[0] * live_image_rgb.shape[1], live_image_rgb.shape[2]])[:, :3]
+        pred_live_image_clusters_flat = self.cluster_map_discriminator.predict(live_image_rgb_flat)
+        pred_live_image_clusters = pred_live_image_clusters_flat.reshape(live_image_rgb.shape[0],
+                                                                         live_image_rgb.shape[1])
+
+        cluster_index = 0
+
+        correct_paint_mask = (pred_live_image_clusters == cluster_index) * self.value_map_masks[curr_layer_idx]
+        correct_paint_mask_3d = np.repeat(np.expand_dims(correct_paint_mask, 2), 3, 2)
+
+        test_image_rgb = np.where(correct_paint_mask_3d,
+                                  self.value_maps[curr_layer_idx],
+                                  live_image_rgb[:, :, :3],
+                                  )
+
+        imsave(os.path.join(self.image_folder, f'valuemap_minus_painted_mask_3d.png'), valuemap_minus_painted_mask_3d)
+        imsave(os.path.join(self.image_folder, f'combined_mask_3d.png'), correct_paint_mask_3d)
+        imsave(os.path.join(self.image_folder, f'test_image_rgb.png'), test_image_rgb)
+        # ================
+
         output_image_rgb = np.where(valuemap_minus_painted_mask_3d,
                                     live_image_rgb[:, :, :3],
                                     self.value_maps[curr_layer_idx])
@@ -66,6 +88,23 @@ class MainClass:
         self.background_gm_trained = GaussianMixture().fit(background_pixel_rgb)
         self.min_loglikelihood_background = min(self.background_gm_trained.score_samples(background_pixel_rgb))
         print('Background Saved')
+
+    def create_value_map_discriminator(self):
+        """
+        Trains a model to predict which value map a pixel belongs to.
+        """
+        background_pixels = self.background_rgb[:, :, :3].reshape(
+            self.background_rgb.shape[0] * self.background_rgb.shape[1], 3)
+        x = list(background_pixels)
+        y = [-1] * len(background_pixels)
+
+        for index in range(len(self.value_maps)):
+            tmp_x = self.value_maps[index][self.value_map_masks[index]]
+            tmp_y = [index] * len(tmp_x)
+
+            x.extend(tmp_x)
+            y.extend(tmp_y)
+        self.cluster_map_discriminator = NearestCentroid().fit(x, y)
 
     def get_background_rgb(self):
         # if self.background_rgb is None:
@@ -117,10 +156,10 @@ class MainClass:
 if __name__ == "__main__":
     main_class = MainClass(base_image_name="00106-2904245478.png")
     main_class.set_background_rgb(imread(os.path.join(main_class.image_folder, "image_0_live_background.png")))
+    main_class.create_value_map_discriminator()
 
-    def tmp_func(live_image):
-        # return main_class.show_progress(live_image_tab.children[0].children[1])
-        return main_class.show_progress(live_image)
+    def show_progress(live_image, curr_layer_idx):
+        return main_class.show_progress(live_image, curr_layer_idx)
 
     with gr.Blocks() as demo:
         with gr.Tab("Live Image") as live_image_tab:
@@ -131,12 +170,16 @@ if __name__ == "__main__":
                                       streaming=True,
                                       mirror_webcam=False,
                                       height=895,
-                                      width=1192)
+                                      width=1192,
+                                      )
             # button_save_background = gr.Button('Save Background')
             # button_save_background.click(fn=main_class.set_background_rgb, inputs=live_image)
 
-            gr.Interface(fn=tmp_func, inputs=live_image, outputs="image", live=True)
-        # with gr.Tab("Paint Guide") as paint_guide_tab:
+        with gr.Tab("Paint Guide") as paint_guide_tab:
+            value_map_int = gradio.Number(label='Value Map', value=0, precision=0, minimum=0,
+                                          maximum=len(main_class.value_maps) - 1)
+            gr.Interface(fn=show_progress, inputs=[live_image, value_map_int], outputs="image", live=True)
+
             # progress_image = gr.Image(value=tmp_func, label='Progress Image', every=6000)
             # button_progress = gr.Button('Show Progress')
             # button_progress.click(fn=main_class.show_progress, inputs=[live_image_tab.children[0].children[0], 0], outputs=progress_image)
