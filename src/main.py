@@ -59,8 +59,16 @@ class MainClass:
 
         cluster_index = 0
 
+        wrong_paint_mask = (pred_live_image_clusters != cluster_index) * self.value_map_masks[curr_layer_idx] * (
+                    pred_live_image_clusters != -1)
+        wrong_paint_mask_3d = np.repeat(np.expand_dims(wrong_paint_mask, 2), 3, 2)
+
         correct_paint_mask = (pred_live_image_clusters == cluster_index) * self.value_map_masks[curr_layer_idx]
         correct_paint_mask_3d = np.repeat(np.expand_dims(correct_paint_mask, 2), 3, 2)
+
+        outside_curr_layer_paint_mask = (pred_live_image_clusters == cluster_index) * ~self.value_map_masks[
+            curr_layer_idx]
+        outside_curr_layer_paint_mask_3d = np.repeat(np.expand_dims(outside_curr_layer_paint_mask, 2), 3, 2)
 
         test_image_rgb = np.where(correct_paint_mask_3d,
                                   self.value_maps[curr_layer_idx],
