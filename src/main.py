@@ -1,3 +1,6 @@
+import time
+from typing import List
+
 import gradio.components.image
 from PIL.Image import Image
 from skimage.io import imread, imsave
@@ -33,9 +36,12 @@ class MainClass:
         image_hsv[:, :, 1] *= s_aug
         image_hsv[:, :, 2] *= v_aug
 
-        return hsv2rgb(image_hsv)
+        image_mod_rgb = hsv2rgb(image_hsv)
+        image_mod_rgb = (image_mod_rgb * 255).astype(np.uint8)
 
-    def show_progress(self, live_image_rgb: np.ndarray, curr_layer_idx: int = 0, s_aug: float = 0.75, v_aug: float = 0.5) -> np.ndarray:
+        return image_mod_rgb
+
+    def show_progress(self, live_image_rgb: np.ndarray, curr_layer_idx: int = 0, right_image: bool = True, s_aug: float = 0.75, v_aug: float = 0.5) -> List[np.ndarray]:
         """
         Shows where the current live image matches the current layer. Match is checked both spatially, does the pixel
         fall on the layer's mask, and if the color matches the layer.
@@ -59,31 +65,53 @@ class MainClass:
 
         cluster_index = 0
 
+        correct_paint_mask = (pred_live_image_clusters == cluster_index) * self.value_map_masks[curr_layer_idx]
+        correct_paint_mask_3d = np.repeat(np.expand_dims(correct_paint_mask, 2), 3, 2)
+
         wrong_paint_mask = (pred_live_image_clusters != cluster_index) * self.value_map_masks[curr_layer_idx] * (
                     pred_live_image_clusters != -1)
         wrong_paint_mask_3d = np.repeat(np.expand_dims(wrong_paint_mask, 2), 3, 2)
-
-        correct_paint_mask = (pred_live_image_clusters == cluster_index) * self.value_map_masks[curr_layer_idx]
-        correct_paint_mask_3d = np.repeat(np.expand_dims(correct_paint_mask, 2), 3, 2)
 
         outside_curr_layer_paint_mask = (pred_live_image_clusters == cluster_index) * ~self.value_map_masks[
             curr_layer_idx]
         outside_curr_layer_paint_mask_3d = np.repeat(np.expand_dims(outside_curr_layer_paint_mask, 2), 3, 2)
 
         test_image_rgb = np.where(correct_paint_mask_3d,
-                                  self.value_maps[curr_layer_idx],
                                   live_image_rgb[:, :, :3],
+                                  self.value_maps[curr_layer_idx],
                                   )
+        value_map_mod = self.modify_hsv_from_rgb(self.value_maps[curr_layer_idx], 0.5, 0.5)
+        live_image_mod_rgb = self.modify_hsv_from_rgb(live_image_rgb[:, :, :3], 0.5, 0.5)
 
-        imsave(os.path.join(self.image_folder, f'valuemap_minus_painted_mask_3d.png'), valuemap_minus_painted_mask_3d)
-        imsave(os.path.join(self.image_folder, f'combined_mask_3d.png'), correct_paint_mask_3d)
-        imsave(os.path.join(self.image_folder, f'test_image_rgb.png'), test_image_rgb)
+        wrong_paint_image_rgb = np.where(wrong_paint_mask_3d,
+                                         live_image_rgb[:, :, :3],
+                                         live_image_mod_rgb
+                                         )
+        correct_paint_image_rgb = np.where(correct_paint_mask_3d,
+                                           live_image_rgb[:, :, :3],
+                                           value_map_mod,
+                                           )
+        # imsave(os.path.join(self.image_folder, f'valuemap_minus_painted_mask_3d.png'), valuemap_minus_painted_mask_3d)
+        # imsave(os.path.join(self.image_folder, f'correct_paint_mask_3d.png'), correct_paint_mask_3d)
+        # imsave(os.path.join(self.image_folder, f'wrong_paint_mask_3d.png'), wrong_paint_mask_3d)
+        # imsave(os.path.join(self.image_folder, f'outside_curr_layer_paint_mask_3d.png'),
+        #        outside_curr_layer_paint_mask_3d)
+        #
+        # imsave(os.path.join(self.image_folder, f'test_image_rgb.png'), test_image_rgb)
+        # imsave(os.path.join(self.image_folder, f'live_image_rgb.png'), live_image_rgb)
+        # imsave(os.path.join(self.image_folder, f'wrong_paint_image_rgb.png'), wrong_paint_image_rgb)
+        # imsave(os.path.join(self.image_folder, f'correct_paint_image_rgb.png'), correct_paint_image_rgb)
         # ================
 
-        output_image_rgb = np.where(valuemap_minus_painted_mask_3d,
-                                    live_image_rgb[:, :, :3],
-                                    self.value_maps[curr_layer_idx])
-        return output_image_rgb
+
+        # output_image_rgb = np.where(valuemap_minus_painted_mask_3d,
+        #                             live_image_rgb[:, :, :3],
+        #                             self.value_maps[curr_layer_idx])
+        # time.sleep(0.5)
+        if right_image:
+            return correct_paint_image_rgb
+        else:
+            return wrong_paint_image_rgb
 
     def set_background_rgb(self, image: np.ndarray):
         """
@@ -166,8 +194,8 @@ if __name__ == "__main__":
     main_class.set_background_rgb(imread(os.path.join(main_class.image_folder, "image_0_live_background.png")))
     main_class.create_value_map_discriminator()
 
-    def show_progress(live_image, curr_layer_idx):
-        return main_class.show_progress(live_image, curr_layer_idx)
+    def show_progress(live_image, curr_layer_idx, right_image):
+        return main_class.show_progress(live_image, curr_layer_idx, right_image)
 
     with gr.Blocks() as demo:
         with gr.Tab("Live Image") as live_image_tab:
@@ -186,12 +214,11 @@ if __name__ == "__main__":
         with gr.Tab("Paint Guide") as paint_guide_tab:
             value_map_int = gradio.Number(label='Value Map', value=0, precision=0, minimum=0,
                                           maximum=len(main_class.value_maps) - 1)
-            gr.Interface(fn=show_progress, inputs=[live_image, value_map_int], outputs="image", live=True)
+            good_image_bool = gr.Checkbox(True, visible=True)
+            # bad_image_bool = gr.Checkbox(False, visible=False)
+            gr.Interface(fn=show_progress, inputs=[live_image, value_map_int, good_image_bool], outputs="image", live=True)
+            # gr.Interface(fn=show_progress, inputs=[live_image, value_map_int, bad_image_bool], outputs="image", live=True)
 
-            # progress_image = gr.Image(value=tmp_func, label='Progress Image', every=6000)
-            # button_progress = gr.Button('Show Progress')
-            # button_progress.click(fn=main_class.show_progress, inputs=[live_image_tab.children[0].children[0], 0], outputs=progress_image)
-            # gr.Image(live_image, every=5)
 
     demo.launch()
 
