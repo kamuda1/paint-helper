@@ -41,7 +41,7 @@ class MainClass:
 
         return image_mod_rgb
 
-    def show_progress(self, live_image_rgb: np.ndarray, curr_layer_idx: int = 0, right_image: bool = True, s_aug: float = 0.75, v_aug: float = 0.5) -> List[np.ndarray]:
+    def show_progress(self, live_image_rgb: np.ndarray, curr_layer_idx: int = 0, image_choice: str = "Base Image", s_aug: float = 0.75, v_aug: float = 0.5) -> List[np.ndarray]:
         """
         Shows where the current live image matches the current layer. Match is checked both spatially, does the pixel
         fall on the layer's mask, and if the color matches the layer.
@@ -63,16 +63,15 @@ class MainClass:
         pred_live_image_clusters = pred_live_image_clusters_flat.reshape(live_image_rgb.shape[0],
                                                                          live_image_rgb.shape[1])
 
-        cluster_index = 0
 
-        correct_paint_mask = (pred_live_image_clusters == cluster_index) * self.value_map_masks[curr_layer_idx]
+        correct_paint_mask = (pred_live_image_clusters == curr_layer_idx) * self.value_map_masks[curr_layer_idx]
         correct_paint_mask_3d = np.repeat(np.expand_dims(correct_paint_mask, 2), 3, 2)
 
-        wrong_paint_mask = (pred_live_image_clusters != cluster_index) * self.value_map_masks[curr_layer_idx] * (
+        wrong_paint_mask = (pred_live_image_clusters != curr_layer_idx) * self.value_map_masks[curr_layer_idx] * (
                     pred_live_image_clusters != -1)
         wrong_paint_mask_3d = np.repeat(np.expand_dims(wrong_paint_mask, 2), 3, 2)
 
-        outside_curr_layer_paint_mask = (pred_live_image_clusters == cluster_index) * ~self.value_map_masks[
+        outside_curr_layer_paint_mask = (pred_live_image_clusters == curr_layer_idx) * ~self.value_map_masks[
             curr_layer_idx]
         outside_curr_layer_paint_mask_3d = np.repeat(np.expand_dims(outside_curr_layer_paint_mask, 2), 3, 2)
 
@@ -89,7 +88,7 @@ class MainClass:
                                          )
         correct_paint_image_rgb = np.where(correct_paint_mask_3d,
                                            live_image_rgb[:, :, :3],
-                                           value_map_mod,
+                                           self.value_maps[curr_layer_idx],
                                            )
         # imsave(os.path.join(self.image_folder, f'valuemap_minus_painted_mask_3d.png'), valuemap_minus_painted_mask_3d)
         # imsave(os.path.join(self.image_folder, f'correct_paint_mask_3d.png'), correct_paint_mask_3d)
@@ -103,15 +102,14 @@ class MainClass:
         # imsave(os.path.join(self.image_folder, f'correct_paint_image_rgb.png'), correct_paint_image_rgb)
         # ================
 
-
-        # output_image_rgb = np.where(valuemap_minus_painted_mask_3d,
-        #                             live_image_rgb[:, :, :3],
-        #                             self.value_maps[curr_layer_idx])
-        # time.sleep(0.5)
-        if right_image:
+        if image_choice == 'Good Paint':
             return correct_paint_image_rgb
-        else:
+        if image_choice == 'Bad Paint':
             return wrong_paint_image_rgb
+        if image_choice == 'Current Image':
+            return live_image_rgb
+        else:
+            return self.base_image_rgb
 
     def set_background_rgb(self, image: np.ndarray):
         """
@@ -194,8 +192,8 @@ if __name__ == "__main__":
     main_class.set_background_rgb(imread(os.path.join(main_class.image_folder, "image_0_live_background.png")))
     main_class.create_value_map_discriminator()
 
-    def show_progress(live_image, curr_layer_idx, right_image):
-        return main_class.show_progress(live_image, curr_layer_idx, right_image)
+    def show_progress(live_image, curr_layer_idx, image_choice):
+        return main_class.show_progress(live_image, curr_layer_idx, image_choice)
 
     with gr.Blocks() as demo:
         with gr.Tab("Live Image") as live_image_tab:
@@ -214,9 +212,11 @@ if __name__ == "__main__":
         with gr.Tab("Paint Guide") as paint_guide_tab:
             value_map_int = gradio.Number(label='Value Map', value=0, precision=0, minimum=0,
                                           maximum=len(main_class.value_maps) - 1)
-            good_image_bool = gr.Checkbox(True, visible=True)
+            # good_image_bool = gr.Checkbox(True, visible=True)
+            image_choice = gr.Radio(['Base Image', 'Good Paint', 'Bad Paint', 'Current Image'],
+                                    value='Base Image', visible=True)
             # bad_image_bool = gr.Checkbox(False, visible=False)
-            gr.Interface(fn=show_progress, inputs=[live_image, value_map_int, good_image_bool], outputs="image", live=True)
+            gr.Interface(fn=show_progress, inputs=[live_image, value_map_int, image_choice], outputs="image", live=True)
             # gr.Interface(fn=show_progress, inputs=[live_image, value_map_int, bad_image_bool], outputs="image", live=True)
 
 
