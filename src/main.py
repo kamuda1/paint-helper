@@ -87,7 +87,7 @@ class MainClass:
                                          live_image_mod_rgb
                                          )
         correct_paint_image_rgb = np.where(correct_paint_mask_3d,
-                                           live_image_rgb[:, :, :3],
+                                           self.background_rgb[:, :, :3],
                                            self.value_maps[curr_layer_idx],
                                            )
         # imsave(os.path.join(self.image_folder, f'valuemap_minus_painted_mask_3d.png'), valuemap_minus_painted_mask_3d)
@@ -176,6 +176,15 @@ class MainClass:
             imsave(os.path.join(self.image_folder, f'value_map_{i}.png'), tmp_value_map)
             imsave(os.path.join(self.image_folder, f'value_map_mask_{i}.png'), mask)
 
+    def update_value_maps_with_background(self):
+        for key in self.value_maps:
+            value_map_3d = np.repeat(np.expand_dims(self.value_map_masks[key], 2), 3, 2)
+            tmp_value_map = np.where(value_map_3d,
+                                     self.value_maps[key],
+                                     self.background_rgb[:, :, :3])
+            self.value_maps[key] = tmp_value_map
+            imsave(os.path.join(self.image_folder, f'value_map_{key}.png'), tmp_value_map)
+
     def compare_images(self, live_image_rgb: np.ndarray, base_image_rgb: np.ndarray) -> np.ndarray:
         """
         Compares two images, returns an image showing where they don't match
@@ -190,6 +199,7 @@ class MainClass:
 if __name__ == "__main__":
     main_class = MainClass(base_image_name="00106-2904245478.png")
     main_class.set_background_rgb(imread(os.path.join(main_class.image_folder, "image_0_live_background.png")))
+    main_class.update_value_maps_with_background()
     main_class.create_value_map_discriminator()
 
     def show_progress(live_image, curr_layer_idx, image_choice):
