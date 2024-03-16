@@ -17,15 +17,23 @@ import gradio as gr
 class MainClass:
     def __init__(self,
                  base_image_name: str,
-                 image_folder: str = r"C:\GitRepos\paint-helper\images",
-                 n_quantiles: int = 8
+                 image_folder: str = r"D:\paint-helper\images",
+                 n_quantiles: int = 8,
+                 image_width_pix: int = 1000,
+                 image_hegiht_pix: int = 800,
                  ):
+        self.image_width_pix = image_width_pix,
+        self.image_hegiht_pix = image_hegiht_pix
         self.image_folder = image_folder
         self.base_image_name = base_image_name
 
         base_image_fname = os.path.join(self.image_folder, "00106-2904245478.png")
         self.base_image_rgb = imread(base_image_fname)
-        self.base_image_hsv = rgb2hsv(self.base_image_rgb)
+        # self.base_image_rgb = resize(self.base_image_rgb,
+        #                              (image_hegiht_pix, image_width_pix, self.base_image_rgb.shape[2]),
+        #                              preserve_range=True).astype(int)
+        self.base_image_hsv = rgb2hsv(self.base_image_rgb[:, :, :3])
+        # self.base_image_hsv = rgb2hsv(self.base_image_rgb[:, :, :3])
 
         self.n_quantiles = n_quantiles
         self.make_value_maps(n_quantiles=n_quantiles)
@@ -180,7 +188,7 @@ class MainClass:
         for key in self.value_maps:
             value_map_3d = np.repeat(np.expand_dims(self.value_map_masks[key], 2), 3, 2)
             tmp_value_map = np.where(value_map_3d,
-                                     self.value_maps[key],
+                                     self.value_maps[key][:, :, :3],
                                      self.background_rgb[:, :, :3])
             self.value_maps[key] = tmp_value_map
             imsave(os.path.join(self.image_folder, f'value_map_{key}.png'), tmp_value_map)
@@ -197,8 +205,10 @@ class MainClass:
 
 
 if __name__ == "__main__":
-    image_folder = 'images'
-    main_class = MainClass(image_folder=image_folder, base_image_name="00106-2904245478.png")
+    # image_folder = 'images'
+    main_class = MainClass(
+        # image_folder=image_folder,
+        base_image_name="00106-2904245478.png")
     main_class.set_background_rgb(imread(os.path.join(main_class.image_folder, "image_0_live_background.png")))
     main_class.update_value_maps_with_background()
     main_class.create_value_map_discriminator()
