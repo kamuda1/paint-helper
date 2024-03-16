@@ -197,7 +197,8 @@ class MainClass:
 
 
 if __name__ == "__main__":
-    main_class = MainClass(base_image_name="00106-2904245478.png")
+    image_folder = 'images'
+    main_class = MainClass(image_folder=image_folder, base_image_name="00106-2904245478.png")
     main_class.set_background_rgb(imread(os.path.join(main_class.image_folder, "image_0_live_background.png")))
     main_class.update_value_maps_with_background()
     main_class.create_value_map_discriminator()
@@ -230,7 +231,11 @@ if __name__ == "__main__":
             # gr.Interface(fn=show_progress, inputs=[live_image, value_map_int, bad_image_bool], outputs="image", live=True)
 
 
-    demo.launch()
+    demo.launch(
+        server_port=8000,
+        server_name="0.0.0.0"
+    )
+    # demo.launch()
 
     pass
 

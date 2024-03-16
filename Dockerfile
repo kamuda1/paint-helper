@@ -50,8 +50,14 @@ RUN python3 -m pip install --no-cache-dir -r /app/requirements.txt
 
 # RUN chown appuser /nonexistent
 
+RUN mkdir -p /app/flagged
+RUN chown appuser /app/flagged
+
 RUN mkdir -p /app/images
 RUN chown appuser /app/images
+
+copy images/00106-2904245478.png /app/images
+copy images/image_0_live_background.png /app/images
 
 RUN mkdir -p /home/appuser
 RUN chown appuser /home/appuser
@@ -59,7 +65,7 @@ RUN chown appuser /home/appuser
 COPY src/main.py /app
 
 # Expose the port that the application listens on.
-EXPOSE 8080
+EXPOSE 8000
 
 # Switch to the non-privileged user to run the application.
 USER appuser
