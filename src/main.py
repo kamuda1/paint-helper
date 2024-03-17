@@ -79,25 +79,37 @@ class MainClass:
                     pred_live_image_clusters != -1)
         wrong_paint_mask_3d = np.repeat(np.expand_dims(wrong_paint_mask, 2), 3, 2)
 
-        outside_curr_layer_paint_mask = (pred_live_image_clusters == curr_layer_idx) * ~self.value_map_masks[
+        outside_curr_layer_and_paint_match_inside_mask = (pred_live_image_clusters == curr_layer_idx) * ~self.value_map_masks[
             curr_layer_idx]
-        outside_curr_layer_paint_mask_3d = np.repeat(np.expand_dims(outside_curr_layer_paint_mask, 2), 3, 2)
+        outside_curr_layer_and_paint_match_inside_mask_3d = np.repeat(
+            np.expand_dims(outside_curr_layer_and_paint_match_inside_mask, 2), 3, 2)
+
+        inside_curr_layer_and_paint_match_inside_mask = (pred_live_image_clusters == curr_layer_idx) * \
+            self.value_map_masks[curr_layer_idx]
+        inside_curr_layer_and_paint_match_inside_mask_3d = np.repeat(
+            np.expand_dims(inside_curr_layer_and_paint_match_inside_mask, 2), 3, 2)
 
         test_image_rgb = np.where(correct_paint_mask_3d,
                                   live_image_rgb[:, :, :3],
                                   self.value_maps[curr_layer_idx],
                                   )
         value_map_mod = self.modify_hsv_from_rgb(self.value_maps[curr_layer_idx], 0.5, 0.5)
-        live_image_mod_rgb = self.modify_hsv_from_rgb(live_image_rgb[:, :, :3], 0.5, 0.5)
+        live_image_hsv_mod_rgb = self.modify_hsv_from_rgb(live_image_rgb[:, :, :3], 0.8, 0.5)
 
         wrong_paint_image_rgb = np.where(wrong_paint_mask_3d,
-                                         live_image_rgb[:, :, :3],
-                                         live_image_mod_rgb
+                                         self.background_rgb[:, :, :3], # background to see that it's good, fill in the rest, not live_image_rgb[:, :, :3],
+                                         live_image_hsv_mod_rgb[:, :, :3], # inside is actual live area, not live_image_mod_rgb
                                          )
-        correct_paint_image_rgb = np.where(correct_paint_mask_3d,
-                                           self.background_rgb[:, :, :3],
+        correct_paint_image_rgb = np.where(inside_curr_layer_and_paint_match_inside_mask_3d,
+                                           live_image_hsv_mod_rgb[:, :, :3],
                                            self.value_maps[curr_layer_idx],
                                            )
+
+        image_diff_rgb = np.where(
+            inside_curr_layer_and_paint_match_inside_mask_3d,
+            live_image_hsv_mod_rgb[:, :, :3],
+            (self.value_maps[curr_layer_idx][:, :, :3] * 0.5 - live_image_rgb[:, :, :3] * 0.5).astype(np.uint8),
+            )
         # imsave(os.path.join(self.image_folder, f'valuemap_minus_painted_mask_3d.png'), valuemap_minus_painted_mask_3d)
         # imsave(os.path.join(self.image_folder, f'correct_paint_mask_3d.png'), correct_paint_mask_3d)
         # imsave(os.path.join(self.image_folder, f'wrong_paint_mask_3d.png'), wrong_paint_mask_3d)
@@ -116,6 +128,12 @@ class MainClass:
             return wrong_paint_image_rgb
         if image_choice == 'Current Image':
             return live_image_rgb
+        if image_choice == 'wrong_paint_mask_3d':
+            return (wrong_paint_mask_3d*255).astype(np.uint8)
+        if image_choice == 'outside_curr_layer_and_paint_match_inside_mask_3d':
+            return (inside_curr_layer_and_paint_match_inside_mask_3d*255).astype(np.uint8)
+        if image_choice == 'image_diff_rgb':
+            return image_diff_rgb
         else:
             return self.base_image_rgb
 
@@ -234,7 +252,8 @@ if __name__ == "__main__":
             value_map_int = gradio.Number(label='Value Map', value=0, precision=0, minimum=0,
                                           maximum=len(main_class.value_maps) - 1)
             # good_image_bool = gr.Checkbox(True, visible=True)
-            image_choice = gr.Radio(['Base Image', 'Good Paint', 'Bad Paint', 'Current Image'],
+            image_choice = gr.Radio(['Base Image', 'Good Paint', 'Bad Paint', 'Current Image', 'wrong_paint_mask_3d', 'outside_curr_layer_and_paint_match_inside_mask_3d',
+                                     'image_diff_rgb'],
                                     value='Base Image', visible=True)
             # bad_image_bool = gr.Checkbox(False, visible=False)
             gr.Interface(fn=show_progress, inputs=[live_image, value_map_int, image_choice], outputs="image", live=True)
