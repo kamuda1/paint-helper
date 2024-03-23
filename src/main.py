@@ -53,20 +53,51 @@ class MainClass:
 
         return image_mod_rgb
 
-    def register_image(self, image):
+    def get_canvas_edge_candidates(self, image):
         image_gray = rgb2gray(image[:, :, :3])
 
-        filter = frangi
+        filter = sato
         edge = filter(image_gray, sigmas=[5])
 
-        harris_output = corner_harris(edge, sigma=2)
+        harris_output = corner_harris(edge, sigma=5)
         coords = corner_peaks(harris_output, min_distance=2, threshold_rel=0.01)
+        # import matplotlib.pyplot as plt
+        # fig, ax = plt.subplots()
+        # ax.imshow(image, cmap=plt.cm.gray)
+        # ax.plot(coords[:, 1], coords[:, 0], color='cyan', marker='o',
+        #         linestyle='None', markersize=6)
+        # plt.savefig(os.path.join(self.image_folder, f'test_test.png'))
+
+        return coords
+
+    def register_image(self, image):
+        coords = self.get_canvas_edge_candidates(image)
+
+        image_pct = 0.1
+
+        ul_coord_options = [(y, x) for (x, y) in coords if
+                            x < image.shape[0] * image_pct and y < image.shape[1] * image_pct]
+        ur_coord_options = [(y, x) for (x, y) in coords if
+                            x < image.shape[0] * image_pct and y > image.shape[1] * (1 - image_pct)]
+        lr_coord_options = [(y, x) for (x, y) in coords if
+                            x > image.shape[0] * (1 - image_pct) and y > image.shape[1] * (1 - image_pct)]
+        ll_coord_options = [(y, x) for (x, y) in coords if
+                            x > image.shape[0] * (1 - image_pct) and y < image.shape[1] * image_pct]
+
+        if len(ul_coord_options) == 0:
+            ul_coord_options = [[0, 0]]
+        if len(ur_coord_options) == 0:
+            ur_coord_options = [[image.shape[1], 0]]
+        if len(lr_coord_options) == 0:
+            lr_coord_options = [[image.shape[1], image.shape[0]]]
+        if len(ll_coord_options) == 0:
+            ll_coord_options = [[0, image.shape[0]]]
 
         dst = np.array([
-            [76, 27],  # ul
-            [1888, 27],  # ur
-            [1888, 1061],  # lr
-            [51, 1045]  # ll
+            list(np.average(ul_coord_options, axis=0)), # [76, 27],  # ul
+            list(np.average(ur_coord_options, axis=0)), # [1888, 27],  # ur
+            list(np.average(lr_coord_options, axis=0)), # [1888, 1061],  # lr
+            list(np.average(ll_coord_options, axis=0)), # [51, 1045]  # ll
         ])
         src = np.array([
             [0, 0],  # ul
