@@ -8,6 +8,10 @@ from skimage import io
 from skimage.transform import resize
 from skimage.color import rgb2hsv, lab2rgb, rgb2lab, deltaE_ciede94, hsv2rgb
 from sklearn.mixture import GaussianMixture
+from skimage.color import rgb2gray
+from skimage.filters import meijering, sato, frangi
+from skimage.feature import corner_harris, corner_subpix, corner_peaks
+from skimage import transform
 from sklearn.neighbors import NearestCentroid
 from numpy import quantile
 import numpy as np
@@ -49,6 +53,34 @@ class MainClass:
 
         return image_mod_rgb
 
+    def register_image(self, image):
+        image_gray = rgb2gray(image[:, :, :3])
+
+        filter = frangi
+        edge = filter(image_gray, sigmas=[5])
+
+        harris_output = corner_harris(edge, sigma=2)
+        coords = corner_peaks(harris_output, min_distance=2, threshold_rel=0.01)
+
+        dst = np.array([
+            [76, 27],  # ul
+            [1888, 27],  # ur
+            [1888, 1061],  # lr
+            [51, 1045]  # ll
+        ])
+        src = np.array([
+            [0, 0],  # ul
+            [self.base_image_rgb.shape[1], 0],  # ur
+            [self.base_image_rgb.shape[1], self.base_image_rgb.shape[0]],  # lr
+            [0, self.base_image_rgb.shape[0]]  # ll
+        ])
+
+        tform3 = transform.ProjectiveTransform()
+        tform3.estimate(src, dst)
+        live_image_warped_rgb = transform.warp(image[:, :, :3], tform3, output_shape=(
+            self.base_image_rgb.shape[0], self.base_image_rgb.shape[1]))
+        return live_image_warped_rgb
+
     def show_progress(self, live_image_rgb: np.ndarray, curr_layer_idx: int = 0, image_choice: str = "Base Image", s_aug: float = 0.75, v_aug: float = 0.5) -> List[np.ndarray]:
         """
         Shows where the current live image matches the current layer. Match is checked both spatially, does the pixel
@@ -57,19 +89,21 @@ class MainClass:
         if self.get_background_rgb() is None:
             return None
 
-        live_image_rgb = resize(live_image_rgb, self.base_image_rgb.shape)
-        live_image_rgb = (live_image_rgb*255).astype(np.uint8)
+        live_image_registered_rgb = self.register_image(live_image_rgb)
 
-        background_mask = self.background_mask(live_image_rgb)
+        # live_image_rgb = resize(live_image_rgb, self.base_image_rgb.shape, preserve_range=True)
+        live_image_registered_rgb = (live_image_registered_rgb*255).astype(np.uint8)
+
+        background_mask = self.background_mask(live_image_registered_rgb)
         valuemap_minus_painted_mask = self.value_map_masks[curr_layer_idx] * background_mask[:, :, 0]
         valuemap_minus_painted_mask_3d = np.repeat(np.expand_dims(valuemap_minus_painted_mask, 2), 3, 2)
 
         # ================
-        live_image_rgb_flat = live_image_rgb.reshape(
-            [live_image_rgb.shape[0] * live_image_rgb.shape[1], live_image_rgb.shape[2]])[:, :3]
+        live_image_rgb_flat = live_image_registered_rgb.reshape(
+            [live_image_registered_rgb.shape[0] * live_image_registered_rgb.shape[1], live_image_registered_rgb.shape[2]])[:, :3]
         pred_live_image_clusters_flat = self.cluster_map_discriminator.predict(live_image_rgb_flat)
-        pred_live_image_clusters = pred_live_image_clusters_flat.reshape(live_image_rgb.shape[0],
-                                                                         live_image_rgb.shape[1])
+        pred_live_image_clusters = pred_live_image_clusters_flat.reshape(live_image_registered_rgb.shape[0],
+                                                                         live_image_registered_rgb.shape[1])
 
 
         correct_paint_mask = (pred_live_image_clusters == curr_layer_idx) * self.value_map_masks[curr_layer_idx]
@@ -90,11 +124,11 @@ class MainClass:
             np.expand_dims(inside_curr_layer_and_paint_match_inside_mask, 2), 3, 2)
 
         test_image_rgb = np.where(correct_paint_mask_3d,
-                                  live_image_rgb[:, :, :3],
+                                  live_image_registered_rgb[:, :, :3],
                                   self.value_maps[curr_layer_idx],
                                   )
         value_map_mod = self.modify_hsv_from_rgb(self.value_maps[curr_layer_idx], 0.5, 0.5)
-        live_image_hsv_mod_rgb = self.modify_hsv_from_rgb(live_image_rgb[:, :, :3], 0.8, 0.5)
+        live_image_hsv_mod_rgb = self.modify_hsv_from_rgb(live_image_registered_rgb[:, :, :3], 0.8, 0.5)
 
         wrong_paint_image_rgb = np.where(wrong_paint_mask_3d,
                                          self.background_rgb[:, :, :3], # background to see that it's good, fill in the rest, not live_image_rgb[:, :, :3],
@@ -102,13 +136,14 @@ class MainClass:
                                          )
         correct_paint_image_rgb = np.where(inside_curr_layer_and_paint_match_inside_mask_3d,
                                            live_image_hsv_mod_rgb[:, :, :3],
-                                           self.value_maps[curr_layer_idx],
+                                           live_image_registered_rgb[:, :, :3
+                                           ], # self.value_maps[curr_layer_idx],
                                            )
 
         image_diff_rgb = np.where(
             inside_curr_layer_and_paint_match_inside_mask_3d,
             live_image_hsv_mod_rgb[:, :, :3],
-            (self.value_maps[curr_layer_idx][:, :, :3] * 0.5 - live_image_rgb[:, :, :3] * 0.5).astype(np.uint8),
+            (self.value_maps[curr_layer_idx][:, :, :3] * 0.5 - live_image_registered_rgb[:, :, :3] * 0.5).astype(np.uint8),
             )
         # imsave(os.path.join(self.image_folder, f'valuemap_minus_painted_mask_3d.png'), valuemap_minus_painted_mask_3d)
         # imsave(os.path.join(self.image_folder, f'correct_paint_mask_3d.png'), correct_paint_mask_3d)
@@ -242,8 +277,8 @@ if __name__ == "__main__":
                                       sources=['webcam'],
                                       streaming=True,
                                       mirror_webcam=False,
-                                      height=895,
-                                      width=1192,
+                                      height=800,
+                                      width=1000,
                                       )
             # button_save_background = gr.Button('Save Background')
             # button_save_background.click(fn=main_class.set_background_rgb, inputs=live_image)
