@@ -3,6 +3,7 @@ from typing import List
 
 import gradio.components.image
 from PIL.Image import Image
+from skimage.exposure import equalize_adapthist
 from skimage.io import imread, imsave
 from skimage import io
 from skimage.transform import resize
@@ -42,6 +43,10 @@ class MainClass:
         self.n_quantiles = n_quantiles
         self.make_value_maps(n_quantiles=n_quantiles)
         self.background_rgb = None
+        self.corner_dict = {'ul': [],
+                            'ur': [],
+                            'lr': [],
+                            'll': []}
 
     def modify_hsv_from_rgb(self, image_rgb: np.ndarray, s_aug: float = 1.0, v_aug: float = 1.0) -> np.ndarray:
         image_hsv = rgb2hsv(image_rgb)
@@ -53,14 +58,18 @@ class MainClass:
 
         return image_mod_rgb
 
-    def get_canvas_edge_candidates(self, image):
-        image_gray = rgb2gray(image[:, :, :3])
+    def get_canvas_edge_candidates(self,
+                                   image_gray,
+                                   filter_sigmas=[5],
+                                   harris_sigma=5,
+                                   min_distance=2,
+                                   threshold_rel=0.01):
 
         filter = sato
-        edge = filter(image_gray, sigmas=[5])
+        edge = filter(image_gray, sigmas=filter_sigmas)
 
-        harris_output = corner_harris(edge, sigma=5)
-        coords = corner_peaks(harris_output, min_distance=2, threshold_rel=0.01)
+        harris_output = corner_harris(edge, sigma=harris_sigma)
+        coords = corner_peaks(harris_output, min_distance=min_distance, threshold_rel=threshold_rel)
         # import matplotlib.pyplot as plt
         # fig, ax = plt.subplots()
         # ax.imshow(image, cmap=plt.cm.gray)
@@ -70,8 +79,21 @@ class MainClass:
 
         return coords
 
+    def update_canvas_edge_coords(self, coords):
+        """
+        Updates the internal coords of the canvas in the webcam image.
+        """
+        self.corner_dict
+
     def register_image(self, image):
-        coords = self.get_canvas_edge_candidates(image)
+        image_gray = rgb2gray(image)
+        img_adapteq = equalize_adapthist(image_gray, clip_limit=0.01)
+        coords = self.get_canvas_edge_candidates(
+            img_adapteq,
+            filter_sigmas=[5],
+            harris_sigma=5,
+            min_distance=5,
+            threshold_rel=0.01)
 
         image_pct = 0.1
 
