@@ -2,6 +2,7 @@ import time
 from typing import List
 
 import gradio.components.image
+import sklearn.metrics
 from PIL.Image import Image
 from skimage.exposure import equalize_adapthist
 from skimage.io import imread, imsave
@@ -12,6 +13,7 @@ from sklearn.mixture import GaussianMixture
 from skimage.color import rgb2gray
 from skimage.filters import meijering, sato, frangi
 from skimage.feature import corner_harris, corner_subpix, corner_peaks
+from sklearn.metrics.pairwise import euclidean_distances
 from skimage import transform
 from sklearn.neighbors import NearestCentroid
 from numpy import quantile
@@ -63,19 +65,14 @@ class MainClass:
                                    filter_sigmas=[5],
                                    harris_sigma=5,
                                    min_distance=2,
-                                   threshold_rel=0.01):
+                                   threshold_rel=0.01,
+                                   black_ridges=True):
 
         filter = sato
-        edge = filter(image_gray, sigmas=filter_sigmas)
+        edge = filter(image_gray, sigmas=filter_sigmas, black_ridges=black_ridges)
 
         harris_output = corner_harris(edge, sigma=harris_sigma)
         coords = corner_peaks(harris_output, min_distance=min_distance, threshold_rel=threshold_rel)
-        # import matplotlib.pyplot as plt
-        # fig, ax = plt.subplots()
-        # ax.imshow(image, cmap=plt.cm.gray)
-        # ax.plot(coords[:, 1], coords[:, 0], color='cyan', marker='o',
-        #         linestyle='None', markersize=6)
-        # plt.savefig(os.path.join(self.image_folder, f'test_test.png'))
 
         return coords
 
@@ -85,41 +82,71 @@ class MainClass:
         """
         self.corner_dict
 
-    def register_image(self, image):
+    def register_image(self, image, image_pct: float = 0.1, distance_thresh: float = 5):
+        """
+        image_pct is the percent distance from the edges we consider points as possible edge candidates.
+        distance_thresh is the distance from the
+        """
         image_gray = rgb2gray(image)
         img_adapteq = equalize_adapthist(image_gray, clip_limit=0.01)
-        coords = self.get_canvas_edge_candidates(
-            img_adapteq,
-            filter_sigmas=[5],
-            harris_sigma=5,
-            min_distance=5,
-            threshold_rel=0.01)
 
-        image_pct = 0.1
+        coords_dict = {f'black_ridges_{("true" if black_ridges == True else "false")}':
+            self.get_canvas_edge_candidates(
+                img_adapteq,
+                filter_sigmas=[5],
+                harris_sigma=5,
+                min_distance=5,
+                threshold_rel=0.01,
+                black_ridges=black_ridges) for black_ridges in [True, False]}
 
-        ul_coord_options = [(y, x) for (x, y) in coords if
+        ul_coord_options_br_true = [(y, x) for (x, y) in coords_dict['black_ridges_true'] if
                             x < image.shape[0] * image_pct and y < image.shape[1] * image_pct]
-        ur_coord_options = [(y, x) for (x, y) in coords if
+        ur_coord_options_br_true = [(y, x) for (x, y) in coords_dict['black_ridges_true'] if
                             x < image.shape[0] * image_pct and y > image.shape[1] * (1 - image_pct)]
-        lr_coord_options = [(y, x) for (x, y) in coords if
+        lr_coord_options_br_true = [(y, x) for (x, y) in coords_dict['black_ridges_true'] if
                             x > image.shape[0] * (1 - image_pct) and y > image.shape[1] * (1 - image_pct)]
-        ll_coord_options = [(y, x) for (x, y) in coords if
+        ll_coord_options_br_true = [(y, x) for (x, y) in coords_dict['black_ridges_true'] if
                             x > image.shape[0] * (1 - image_pct) and y < image.shape[1] * image_pct]
 
-        if len(ul_coord_options) == 0:
-            ul_coord_options = [[0, 0]]
-        if len(ur_coord_options) == 0:
-            ur_coord_options = [[image.shape[1], 0]]
-        if len(lr_coord_options) == 0:
-            lr_coord_options = [[image.shape[1], image.shape[0]]]
-        if len(ll_coord_options) == 0:
-            ll_coord_options = [[0, image.shape[0]]]
+        if len(ul_coord_options_br_true) == 0:
+            ul_coord_options_br_true = [[0, 0]]
+        if len(ur_coord_options_br_true) == 0:
+            ur_coord_options_br_true = [[image.shape[1], 0]]
+        if len(lr_coord_options_br_true) == 0:
+            lr_coord_options_br_true = [[image.shape[1], image.shape[0]]]
+        if len(ll_coord_options_br_true) == 0:
+            ll_coord_options_br_true = [[0, image.shape[0]]]
+
+        ul_coord_options_br_false = [
+            (y, x) for (x, y) in coords_dict['black_ridges_false'] if
+            euclidean_distances(np.array((y, x)).reshape(1, -1),
+                                np.average(ul_coord_options_br_true, axis=0).reshape(1, -1)) < distance_thresh]
+        ur_coord_options_br_false = [
+            (y, x) for (x, y) in coords_dict['black_ridges_false'] if
+            euclidean_distances(np.array((y, x)).reshape(1, -1),
+                                np.average(ur_coord_options_br_true, axis=0).reshape(1, -1)) < distance_thresh]
+        lr_coord_options_br_false = [
+            (y, x) for (x, y) in coords_dict['black_ridges_false'] if
+            euclidean_distances(np.array((y, x)).reshape(1, -1),
+                                np.average(lr_coord_options_br_true, axis=0).reshape(1, -1)) < distance_thresh]
+        ll_coord_options_br_false = [
+            (y, x) for (x, y) in coords_dict['black_ridges_false'] if
+            euclidean_distances(np.array((y, x)).reshape(1, -1),
+                                np.average(ll_coord_options_br_true, axis=0).reshape(1, -1)) < distance_thresh]
+
+        ul_coord_options = [x for x in ul_coord_options_br_true] + [x for x in ul_coord_options_br_false]
+        ur_coord_options = [x for x in ur_coord_options_br_true] + [x for x in ur_coord_options_br_false]
+        lr_coord_options = [x for x in lr_coord_options_br_true] + [x for x in lr_coord_options_br_false]
+        ll_coord_options = [x for x in ll_coord_options_br_true] + [x for x in ll_coord_options_br_false]
+
+        x_padding = 10
+        y_padding = 10
 
         dst = np.array([
-            list(np.average(ul_coord_options, axis=0)), # [76, 27],  # ul
-            list(np.average(ur_coord_options, axis=0)), # [1888, 27],  # ur
-            list(np.average(lr_coord_options, axis=0)), # [1888, 1061],  # lr
-            list(np.average(ll_coord_options, axis=0)), # [51, 1045]  # ll
+            list(np.average(ul_coord_options, axis=0) + np.array([-x_padding, -y_padding])),
+            list(np.average(ur_coord_options, axis=0) + np.array([x_padding, -y_padding])),
+            list(np.average(lr_coord_options, axis=0) + np.array([x_padding, y_padding])),
+            list(np.average(ll_coord_options, axis=0) + np.array([-x_padding, y_padding])),
         ])
         src = np.array([
             [0, 0],  # ul
@@ -132,6 +159,14 @@ class MainClass:
         tform3.estimate(src, dst)
         live_image_warped_rgb = transform.warp(image[:, :, :3], tform3, output_shape=(
             self.base_image_rgb.shape[0], self.base_image_rgb.shape[1]))
+
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        ax.imshow(image, cmap=plt.cm.gray)
+        ax.plot(coords_dict['black_ridges_true'][:, 1], coords_dict['black_ridges_true'][:, 0], color='cyan', marker='o',
+                linestyle='None', markersize=6)
+        plt.savefig(os.path.join(self.image_folder, f'test_test.png'))
+
         return live_image_warped_rgb
 
     def show_progress(self, live_image_rgb: np.ndarray, curr_layer_idx: int = 0, image_choice: str = "Base Image", s_aug: float = 0.75, v_aug: float = 0.5) -> List[np.ndarray]:
@@ -344,7 +379,7 @@ if __name__ == "__main__":
                                      'image_diff_rgb'],
                                     value='Base Image', visible=True)
             # bad_image_bool = gr.Checkbox(False, visible=False)
-            gr.Interface(fn=show_progress, inputs=[live_image, value_map_int, image_choice], outputs="image", live=True)
+            gr.Interface(title='', fn=show_progress, inputs=[live_image, value_map_int, image_choice], outputs="image", live=True)
             # gr.Interface(fn=show_progress, inputs=[live_image, value_map_int, bad_image_bool], outputs="image", live=True)
 
 
