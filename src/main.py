@@ -4,6 +4,7 @@ from typing import List
 import gradio.components.image
 import sklearn.metrics
 from PIL.Image import Image
+from scipy.stats import mode
 from skimage.exposure import equalize_adapthist
 from skimage.io import imread, imsave
 from skimage import io
@@ -45,10 +46,7 @@ class MainClass:
         self.n_quantiles = n_quantiles
         self.make_value_maps(n_quantiles=n_quantiles)
         self.background_rgb = None
-        self.corner_dict = {'ul': [],
-                            'ur': [],
-                            'lr': [],
-                            'll': []}
+        self.canvas_edge_coords = []
 
     def modify_hsv_from_rgb(self, image_rgb: np.ndarray, s_aug: float = 1.0, v_aug: float = 1.0) -> np.ndarray:
         image_hsv = rgb2hsv(image_rgb)
@@ -76,11 +74,13 @@ class MainClass:
 
         return coords
 
-    def update_canvas_edge_coords(self, coords):
+    def update_canvas_edge_coords(self, coords, coords_memory_steps:int = 10):
         """
         Updates the internal coords of the canvas in the webcam image.
         """
-        self.corner_dict
+        self.canvas_edge_coords.append(coords)
+        if len(self.canvas_edge_coords) > coords_memory_steps:
+            del self.canvas_edge_coords[0]
 
     def register_image(self, image, image_pct: float = 0.1, distance_thresh: float = 5):
         """
@@ -142,11 +142,41 @@ class MainClass:
         x_padding = 10
         y_padding = 10
 
+        coords = {
+            'ul': list(np.average(ul_coord_options, axis=0) + np.array([-x_padding, -y_padding])),
+            'ur': list(np.average(ur_coord_options, axis=0) + np.array([x_padding, -y_padding])),
+            'lr': list(np.average(lr_coord_options, axis=0) + np.array([x_padding, y_padding])),
+            'll': list(np.average(ll_coord_options, axis=0) + np.array([-x_padding, y_padding])),
+        }
+        self.update_canvas_edge_coords(coords, coords_memory_steps=50)
+
+        if len(self.canvas_edge_coords) < 2:
+            gm_ul_mean = self.canvas_edge_coords[0]['ul']
+        else:
+            gm_ul_mean = list(GaussianMixture(n_components=1, random_state=0).fit([x['ul'] for x in self.canvas_edge_coords]).means_[0])
+
+        if len(self.canvas_edge_coords) < 2:
+            gm_ur_mean = self.canvas_edge_coords[0]['ur']
+        else:
+            gm_ur_mean = list(GaussianMixture(n_components=1, random_state=0).fit([x['ur'] for x in self.canvas_edge_coords]).means_[0])
+
+        if len(self.canvas_edge_coords) < 2:
+            gm_lr_mean = self.canvas_edge_coords[0]['lr']
+        else:
+            gm_lr_mean = list(GaussianMixture(n_components=1, random_state=0).fit([x['lr'] for x in self.canvas_edge_coords]).means_[0])
+
+        if len(self.canvas_edge_coords) < 2:
+            gm_ll_mean = self.canvas_edge_coords[0]['ll']
+        else:
+            gm_ll_mean = list(GaussianMixture(n_components=1, random_state=0).fit([x['ll'] for x in self.canvas_edge_coords]).means_[0])
+
+
+        # take mode of the last 10
         dst = np.array([
-            list(np.average(ul_coord_options, axis=0) + np.array([-x_padding, -y_padding])),
-            list(np.average(ur_coord_options, axis=0) + np.array([x_padding, -y_padding])),
-            list(np.average(lr_coord_options, axis=0) + np.array([x_padding, y_padding])),
-            list(np.average(ll_coord_options, axis=0) + np.array([-x_padding, y_padding])),
+            gm_ul_mean, # list(mode([x['ul'] for x in self.canvas_edge_coords], axis=0).mode), # list(np.average(ul_coord_options, axis=0) + np.array([-x_padding, -y_padding])),
+            gm_ur_mean, # list(mode([x['ur'] for x in self.canvas_edge_coords], axis=0).mode), # list(np.average(ur_coord_options, axis=0) + np.array([x_padding, -y_padding])),
+            gm_lr_mean, # list(mode([x['lr'] for x in self.canvas_edge_coords], axis=0).mode), # list(np.average(lr_coord_options, axis=0) + np.array([x_padding, y_padding])),
+            gm_ll_mean, # list(mode([x['ll'] for x in self.canvas_edge_coords], axis=0).mode), # list(np.average(ll_coord_options, axis=0) + np.array([-x_padding, y_padding])),
         ])
         src = np.array([
             [0, 0],  # ul
@@ -160,12 +190,12 @@ class MainClass:
         live_image_warped_rgb = transform.warp(image[:, :, :3], tform3, output_shape=(
             self.base_image_rgb.shape[0], self.base_image_rgb.shape[1]))
 
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots()
-        ax.imshow(image, cmap=plt.cm.gray)
-        ax.plot(coords_dict['black_ridges_true'][:, 1], coords_dict['black_ridges_true'][:, 0], color='cyan', marker='o',
-                linestyle='None', markersize=6)
-        plt.savefig(os.path.join(self.image_folder, f'test_test.png'))
+        # import matplotlib.pyplot as plt
+        # fig, ax = plt.subplots()
+        # ax.imshow(image, cmap=plt.cm.gray)
+        # ax.plot(coords_dict['black_ridges_true'][:, 1], coords_dict['black_ridges_true'][:, 0], color='cyan', marker='o',
+        #         linestyle='None', markersize=6)
+        # plt.savefig(os.path.join(self.image_folder, f'test_test.png'))
 
         return live_image_warped_rgb
 
