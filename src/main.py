@@ -5,7 +5,7 @@ import gradio.components.image
 import sklearn.metrics
 from PIL.Image import Image
 from scipy.stats import mode
-from skimage.exposure import equalize_adapthist
+from skimage.exposure import equalize_adapthist, match_histograms, rescale_intensity
 from skimage.io import imread, imsave
 from skimage import io
 from skimage.transform import resize
@@ -30,6 +30,7 @@ class MainClass:
                  image_width_pix: int = 1000,
                  image_hegiht_pix: int = 800,
                  ):
+        self.live_image_rgb = None
         self.image_width_pix = image_width_pix,
         self.image_hegiht_pix = image_hegiht_pix
         self.image_folder = image_folder
@@ -46,7 +47,11 @@ class MainClass:
         self.n_quantiles = n_quantiles
         self.make_value_maps(n_quantiles=n_quantiles)
         self.background_rgb = None
-        self.canvas_edge_coords = []
+
+        self.canvas_edge_coords = {'ul': [],
+                                   'ur': [],
+                                   'lr': [],
+                                   'll': []}
 
     def modify_hsv_from_rgb(self, image_rgb: np.ndarray, s_aug: float = 1.0, v_aug: float = 1.0) -> np.ndarray:
         image_hsv = rgb2hsv(image_rgb)
@@ -74,20 +79,40 @@ class MainClass:
 
         return coords
 
-    def update_canvas_edge_coords(self, coords, coords_memory_steps:int = 10):
+    def update_canvas_edge_coords(self, coords: dict[List]):
         """
         Updates the internal coords of the canvas in the webcam image.
         """
-        self.canvas_edge_coords.append(coords)
-        if len(self.canvas_edge_coords) > coords_memory_steps:
-            del self.canvas_edge_coords[0]
+        image = self.live_image_rgb
+
+        # coords = {'ul': [tuple_1, tuple_2],
+        #           'ur': [tuple_1, tuple_2],
+        #           'lr': [tuple_1, tuple_2, tuple_2],
+        #           'll': [tuple_1, tuple_2]}
+
+        edge_true_dict = {
+            'ul': [0, 0],
+            'ur': [image.shape[1], 0],
+            'lr': [image.shape[1], image.shape[0]],
+            'll': [0, image.shape[0]]}
+
+        for edge_str in edge_true_dict:
+            if coords[edge_str] == edge_true_dict[edge_str]:
+                continue
+            else:
+                self.canvas_edge_coords[edge_str].append(coords[edge_str])
+                if len(self.canvas_edge_coords[edge_str]) > self.coords_memory_steps:
+                    del self.canvas_edge_coords[edge_str][0:len(self.canvas_edge_coords[edge_str]) - self.coords_memory_steps]
 
     def register_image(self, image, image_pct: float = 0.1, distance_thresh: float = 5):
         """
         image_pct is the percent distance from the edges we consider points as possible edge candidates.
         distance_thresh is the distance from the
         """
-        image_gray = rgb2gray(image)
+        image_histogram_match_rgb = rescale_intensity(image)
+
+        image_gray = rgb2gray(image_histogram_match_rgb)
+
         img_adapteq = equalize_adapthist(image_gray, clip_limit=0.01)
 
         coords_dict = {f'black_ridges_{("true" if black_ridges == True else "false")}':
@@ -139,8 +164,8 @@ class MainClass:
         lr_coord_options = [x for x in lr_coord_options_br_true] + [x for x in lr_coord_options_br_false]
         ll_coord_options = [x for x in ll_coord_options_br_true] + [x for x in ll_coord_options_br_false]
 
-        x_padding = 10
-        y_padding = 10
+        x_padding = 0
+        y_padding = 0
 
         coords = {
             'ul': list(np.average(ul_coord_options, axis=0) + np.array([-x_padding, -y_padding])),
@@ -148,27 +173,27 @@ class MainClass:
             'lr': list(np.average(lr_coord_options, axis=0) + np.array([x_padding, y_padding])),
             'll': list(np.average(ll_coord_options, axis=0) + np.array([-x_padding, y_padding])),
         }
-        self.update_canvas_edge_coords(coords, coords_memory_steps=50)
+        self.update_canvas_edge_coords(coords)
 
-        if len(self.canvas_edge_coords) < 2:
-            gm_ul_mean = self.canvas_edge_coords[0]['ul']
+        if len(self.canvas_edge_coords['ul']) < 2:
+            gm_ul_mean = [0, 0]
         else:
-            gm_ul_mean = list(GaussianMixture(n_components=1, random_state=0).fit([x['ul'] for x in self.canvas_edge_coords]).means_[0])
+            gm_ul_mean = list(GaussianMixture(n_components=1, random_state=0).fit([x for x in self.canvas_edge_coords['ul']]).means_[0])
 
-        if len(self.canvas_edge_coords) < 2:
-            gm_ur_mean = self.canvas_edge_coords[0]['ur']
+        if len(self.canvas_edge_coords['ur']) < 2:
+            gm_ur_mean = [image.shape[1], 0]
         else:
-            gm_ur_mean = list(GaussianMixture(n_components=1, random_state=0).fit([x['ur'] for x in self.canvas_edge_coords]).means_[0])
+            gm_ur_mean = list(GaussianMixture(n_components=1, random_state=0).fit([x for x in self.canvas_edge_coords['ur']]).means_[0])
 
-        if len(self.canvas_edge_coords) < 2:
-            gm_lr_mean = self.canvas_edge_coords[0]['lr']
+        if len(self.canvas_edge_coords['lr']) < 2:
+            gm_lr_mean = [image.shape[1], image.shape[0]]
         else:
-            gm_lr_mean = list(GaussianMixture(n_components=1, random_state=0).fit([x['lr'] for x in self.canvas_edge_coords]).means_[0])
+            gm_lr_mean = list(GaussianMixture(n_components=1, random_state=0).fit([x for x in self.canvas_edge_coords['lr']]).means_[0])
 
-        if len(self.canvas_edge_coords) < 2:
-            gm_ll_mean = self.canvas_edge_coords[0]['ll']
+        if len(self.canvas_edge_coords['ll']) < 2:
+            gm_ll_mean = [0, image.shape[0]]
         else:
-            gm_ll_mean = list(GaussianMixture(n_components=1, random_state=0).fit([x['ll'] for x in self.canvas_edge_coords]).means_[0])
+            gm_ll_mean = list(GaussianMixture(n_components=1, random_state=0).fit([x for x in self.canvas_edge_coords['ll']]).means_[0])
 
 
         # take mode of the last 10
@@ -197,17 +222,21 @@ class MainClass:
         #         linestyle='None', markersize=6)
         # plt.savefig(os.path.join(self.image_folder, f'test_test.png'))
 
-        return live_image_warped_rgb
+        # live_image_warped_histogram_match_rgb = match_histograms(live_image_warped_rgb, self.base_image_rgb)
+        live_image_warped_histogram_match_rgb = rescale_intensity(live_image_warped_rgb)
+        return live_image_warped_histogram_match_rgb
 
-    def show_progress(self, live_image_rgb: np.ndarray, curr_layer_idx: int = 0, image_choice: str = "Base Image", s_aug: float = 0.75, v_aug: float = 0.5) -> List[np.ndarray]:
+    def show_progress(self, live_image_rgb: np.ndarray, curr_layer_idx: int = 0, image_choice: str = "Base Image", image_pct: float = 0.1, s_aug: float = 0.75, v_aug: float = 0.5) -> List[np.ndarray]:
         """
         Shows where the current live image matches the current layer. Match is checked both spatially, does the pixel
         fall on the layer's mask, and if the color matches the layer.
         """
+        self.live_image_rgb = live_image_rgb
+
         if self.get_background_rgb() is None:
             return None
 
-        live_image_registered_rgb = self.register_image(live_image_rgb)
+        live_image_registered_rgb = self.register_image(live_image_rgb, image_pct)
 
         # live_image_rgb = resize(live_image_rgb, self.base_image_rgb.shape, preserve_range=True)
         live_image_registered_rgb = (live_image_registered_rgb*255).astype(np.uint8)
@@ -384,8 +413,9 @@ if __name__ == "__main__":
     main_class.update_value_maps_with_background()
     main_class.create_value_map_discriminator()
 
-    def show_progress(live_image, curr_layer_idx, image_choice):
-        return main_class.show_progress(live_image, curr_layer_idx, image_choice)
+    def show_progress(live_image, curr_layer_idx, image_choice, image_pct, coords_memory_steps):
+        main_class.coords_memory_steps = coords_memory_steps
+        return main_class.show_progress(live_image, curr_layer_idx, image_choice, image_pct)
 
     with gr.Blocks() as demo:
         with gr.Tab("Live Image") as live_image_tab:
@@ -404,12 +434,16 @@ if __name__ == "__main__":
         with gr.Tab("Paint Guide") as paint_guide_tab:
             value_map_int = gradio.Number(label='Value Map', value=0, precision=0, minimum=0,
                                           maximum=len(main_class.value_maps) - 1)
+            image_pct = gradio.Number(label='image_pct', value=0.1, step=0.01, minimum=0.01,
+                                          maximum=0.3)
+            coords_memory_steps = gradio.Number(label='coords_memory_steps', value=10, precision=0, minimum=1,
+                                          maximum=100)
             # good_image_bool = gr.Checkbox(True, visible=True)
             image_choice = gr.Radio(['Base Image', 'Good Paint', 'Bad Paint', 'Current Image', 'wrong_paint_mask_3d', 'outside_curr_layer_and_paint_match_inside_mask_3d',
                                      'image_diff_rgb'],
                                     value='Base Image', visible=True)
             # bad_image_bool = gr.Checkbox(False, visible=False)
-            gr.Interface(title='', fn=show_progress, inputs=[live_image, value_map_int, image_choice], outputs="image", live=True)
+            gr.Interface(title='', fn=show_progress, inputs=[live_image, value_map_int, image_choice, image_pct, coords_memory_steps], outputs="image", live=True)
             # gr.Interface(fn=show_progress, inputs=[live_image, value_map_int, bad_image_bool], outputs="image", live=True)
 
 
