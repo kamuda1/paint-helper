@@ -1,7 +1,9 @@
 import time
+from operator import add
 from typing import List
 
 import gradio.components.image
+import pandas as pd
 import sklearn.metrics
 from PIL.Image import Image
 from scipy.stats import mode
@@ -21,11 +23,14 @@ from numpy import quantile
 import numpy as np
 import os
 import gradio as gr
+import shutil
+
 
 class MainClass:
     def __init__(self,
                  base_image_name: str,
                  image_folder: str = r"D:\paint-helper\images",
+                 gradio_temp_files_path: str = os.path.join("C:", "Users", "atomi", "AppData", "Local", "Temp", "gradio"),
                  n_quantiles: int = 8,
                  image_width_pix: int = 1000,
                  image_hegiht_pix: int = 800,
@@ -35,7 +40,7 @@ class MainClass:
         self.image_hegiht_pix = image_hegiht_pix
         self.image_folder = image_folder
         self.base_image_name = base_image_name
-
+        self.gradio_temp_files_path = gradio_temp_files_path
         base_image_fname = os.path.join(self.image_folder, "00106-2904245478.png")
         self.base_image_rgb = imread(base_image_fname)
         # self.base_image_rgb = resize(self.base_image_rgb,
@@ -62,6 +67,11 @@ class MainClass:
         image_mod_rgb = (image_mod_rgb * 255).astype(np.uint8)
 
         return image_mod_rgb
+
+    def remove_gradio_tmp_files(self):
+        dirs = os.listdir(self.gradio_temp_files_path)
+        for tmp_dir in dirs:
+            shutil.rmtree(os.path.join(self.gradio_temp_files_path, tmp_dir))
 
     def get_canvas_edge_candidates(self,
                                    image_gray,
@@ -104,7 +114,7 @@ class MainClass:
                 if len(self.canvas_edge_coords[edge_str]) > self.coords_memory_steps:
                     del self.canvas_edge_coords[edge_str][0:len(self.canvas_edge_coords[edge_str]) - self.coords_memory_steps]
 
-    def register_image(self, image, image_pct: float = 0.1, distance_thresh: float = 5):
+    def register_image(self, image, image_pct: float = 0.1, all_corner_adjustments=None, distance_thresh: float = 5):
         """
         image_pct is the percent distance from the edges we consider points as possible edge candidates.
         distance_thresh is the distance from the
@@ -118,10 +128,10 @@ class MainClass:
         coords_dict = {f'black_ridges_{("true" if black_ridges == True else "false")}':
             self.get_canvas_edge_candidates(
                 img_adapteq,
-                filter_sigmas=[5],
-                harris_sigma=5,
+                filter_sigmas=[6],
+                harris_sigma=8,
                 min_distance=5,
-                threshold_rel=0.01,
+                threshold_rel=0.1,
                 black_ridges=black_ridges) for black_ridges in [True, False]}
 
         ul_coord_options_br_true = [(y, x) for (x, y) in coords_dict['black_ridges_true'] if
@@ -198,10 +208,10 @@ class MainClass:
 
         # take mode of the last 10
         dst = np.array([
-            gm_ul_mean, # list(mode([x['ul'] for x in self.canvas_edge_coords], axis=0).mode), # list(np.average(ul_coord_options, axis=0) + np.array([-x_padding, -y_padding])),
-            gm_ur_mean, # list(mode([x['ur'] for x in self.canvas_edge_coords], axis=0).mode), # list(np.average(ur_coord_options, axis=0) + np.array([x_padding, -y_padding])),
-            gm_lr_mean, # list(mode([x['lr'] for x in self.canvas_edge_coords], axis=0).mode), # list(np.average(lr_coord_options, axis=0) + np.array([x_padding, y_padding])),
-            gm_ll_mean, # list(mode([x['ll'] for x in self.canvas_edge_coords], axis=0).mode), # list(np.average(ll_coord_options, axis=0) + np.array([-x_padding, y_padding])),
+            list(map(add, gm_ul_mean, [int(all_corner_adjustments['ul_x'].values[0]), int(all_corner_adjustments['ul_y'].values[0])])),
+            list(map(add, gm_ur_mean, [int(all_corner_adjustments['ur_x'].values[0]), int(all_corner_adjustments['ur_y'].values[0])])),
+            list(map(add, gm_lr_mean, [int(all_corner_adjustments['lr_x'].values[0]), int(all_corner_adjustments['lr_y'].values[0])])),
+            list(map(add, gm_ll_mean, [int(all_corner_adjustments['ll_x'].values[0]), int(all_corner_adjustments['ll_y'].values[0])])),
         ])
         src = np.array([
             [0, 0],  # ul
@@ -226,17 +236,20 @@ class MainClass:
         live_image_warped_histogram_match_rgb = rescale_intensity(live_image_warped_rgb)
         return live_image_warped_histogram_match_rgb
 
-    def show_progress(self, live_image_rgb: np.ndarray, curr_layer_idx: int = 0, image_choice: str = "Base Image", image_pct: float = 0.1, s_aug: float = 0.75, v_aug: float = 0.5) -> List[np.ndarray]:
+    def show_progress(self, live_image_rgb: np.ndarray, all_corner_adjustments: List, curr_layer_idx: int = 0, image_choice: str = "Base Image", image_pct: float = 0.1, s_aug: float = 0.75, v_aug: float = 0.5) -> List[np.ndarray]:
         """
         Shows where the current live image matches the current layer. Match is checked both spatially, does the pixel
         fall on the layer's mask, and if the color matches the layer.
         """
+
+        self.remove_gradio_tmp_files()
+
         self.live_image_rgb = live_image_rgb
 
         if self.get_background_rgb() is None:
             return None
 
-        live_image_registered_rgb = self.register_image(live_image_rgb, image_pct)
+        live_image_registered_rgb = self.register_image(live_image_rgb, image_pct, all_corner_adjustments)
 
         # live_image_rgb = resize(live_image_rgb, self.base_image_rgb.shape, preserve_range=True)
         live_image_registered_rgb = (live_image_registered_rgb*255).astype(np.uint8)
@@ -275,12 +288,13 @@ class MainClass:
                                   self.value_maps[curr_layer_idx],
                                   )
         value_map_mod = self.modify_hsv_from_rgb(self.value_maps[curr_layer_idx], 0.5, 0.5)
-        live_image_hsv_mod_rgb = self.modify_hsv_from_rgb(live_image_registered_rgb[:, :, :3], 0.8, 0.5)
+        live_image_hsv_mod_rgb = self.modify_hsv_from_rgb(live_image_registered_rgb[:, :, :3], 1.0, 1.0)
 
         wrong_paint_image_rgb = np.where(wrong_paint_mask_3d,
                                          self.background_rgb[:, :, :3], # background to see that it's good, fill in the rest, not live_image_rgb[:, :, :3],
                                          live_image_hsv_mod_rgb[:, :, :3], # inside is actual live area, not live_image_mod_rgb
                                          )
+
         correct_paint_image_rgb = np.where(inside_curr_layer_and_paint_match_inside_mask_3d,
                                            live_image_hsv_mod_rgb[:, :, :3],
                                            live_image_registered_rgb[:, :, :3
@@ -292,17 +306,7 @@ class MainClass:
             live_image_hsv_mod_rgb[:, :, :3],
             (self.value_maps[curr_layer_idx][:, :, :3] * 0.5 - live_image_registered_rgb[:, :, :3] * 0.5).astype(np.uint8),
             )
-        # imsave(os.path.join(self.image_folder, f'valuemap_minus_painted_mask_3d.png'), valuemap_minus_painted_mask_3d)
-        # imsave(os.path.join(self.image_folder, f'correct_paint_mask_3d.png'), correct_paint_mask_3d)
-        # imsave(os.path.join(self.image_folder, f'wrong_paint_mask_3d.png'), wrong_paint_mask_3d)
-        # imsave(os.path.join(self.image_folder, f'outside_curr_layer_paint_mask_3d.png'),
-        #        outside_curr_layer_paint_mask_3d)
-        #
-        # imsave(os.path.join(self.image_folder, f'test_image_rgb.png'), test_image_rgb)
-        # imsave(os.path.join(self.image_folder, f'live_image_rgb.png'), live_image_rgb)
-        # imsave(os.path.join(self.image_folder, f'wrong_paint_image_rgb.png'), wrong_paint_image_rgb)
-        # imsave(os.path.join(self.image_folder, f'correct_paint_image_rgb.png'), correct_paint_image_rgb)
-        # ================
+
 
         if image_choice == 'Good Paint':
             return correct_paint_image_rgb
@@ -413,9 +417,9 @@ if __name__ == "__main__":
     main_class.update_value_maps_with_background()
     main_class.create_value_map_discriminator()
 
-    def show_progress(live_image, curr_layer_idx, image_choice, image_pct, coords_memory_steps):
+    def show_progress(live_image, all_corner_adjustments, curr_layer_idx, image_choice, image_pct, coords_memory_steps):
         main_class.coords_memory_steps = coords_memory_steps
-        return main_class.show_progress(live_image, curr_layer_idx, image_choice, image_pct)
+        return main_class.show_progress(live_image, all_corner_adjustments, curr_layer_idx, image_choice, image_pct)
 
     with gr.Blocks() as demo:
         with gr.Tab("Live Image") as live_image_tab:
@@ -434,16 +438,25 @@ if __name__ == "__main__":
         with gr.Tab("Paint Guide") as paint_guide_tab:
             value_map_int = gradio.Number(label='Value Map', value=0, precision=0, minimum=0,
                                           maximum=len(main_class.value_maps) - 1)
-            image_pct = gradio.Number(label='image_pct', value=0.1, step=0.01, minimum=0.01,
+            image_pct = gradio.Number(label='image_pct', value=0.06, step=0.01, minimum=0.01,
                                           maximum=0.3)
+
+            all_corner_adjustments_dict = {}
+
+            for tmp_corner in ['ul', 'ur', 'lr', 'll']:
+                for tmp_coord in ['x', 'y']:
+                    all_corner_adjustments_dict[f'{tmp_corner}_{tmp_coord}'] = [0]
+            all_corner_adjustments = gradio.Dataframe(value=pd.DataFrame.from_dict(all_corner_adjustments_dict),
+                                                      interactive=True)
+
             coords_memory_steps = gradio.Number(label='coords_memory_steps', value=10, precision=0, minimum=1,
-                                          maximum=100)
+                                          maximum=1000)
             # good_image_bool = gr.Checkbox(True, visible=True)
             image_choice = gr.Radio(['Base Image', 'Good Paint', 'Bad Paint', 'Current Image', 'wrong_paint_mask_3d', 'outside_curr_layer_and_paint_match_inside_mask_3d',
                                      'image_diff_rgb'],
                                     value='Base Image', visible=True)
             # bad_image_bool = gr.Checkbox(False, visible=False)
-            gr.Interface(title='', fn=show_progress, inputs=[live_image, value_map_int, image_choice, image_pct, coords_memory_steps], outputs="image", live=True)
+            gr.Interface(title='', fn=show_progress, inputs=[live_image, all_corner_adjustments, value_map_int, image_choice, image_pct, coords_memory_steps], outputs="image", live=True)
             # gr.Interface(fn=show_progress, inputs=[live_image, value_map_int, bad_image_bool], outputs="image", live=True)
 
 
